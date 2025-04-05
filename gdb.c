@@ -40,7 +40,7 @@
 
 /* AVR puts garbage in hight bits on return address on stack.
    Mask them out */
-#if defined(__AVR_ATmega16__)
+#if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
 #define RET_ADDR_MASK  0x1f
 #else
 #error Unsupported platform
@@ -363,6 +363,7 @@ void init_timer1(void)
 {
 #define TIMER1_RATE 1000
 
+#if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
 #if defined(__AVR_ATmega16__)
 	/* Set CTC mode */
 	TCCR1B |= (1 << WGM12);
@@ -372,6 +373,17 @@ void init_timer1(void)
 	OCR1A = F_CPU / TIMER1_RATE - 1;
 	/* Enable Output Compare Match Interrupt */
 	TIMSK |= (1 << OCIE1A);
+#endif
+#if defined(__AVR_ATmega32U4__)
+	/* Set CTC mode */
+	TCCR1B |= (1 << WGM12);
+	/* No prescaler */
+	TCCR1B |= (1 << CS10);
+	/* Set the compare register */
+	OCR1A = F_CPU / TIMER1_RATE - 1;
+	/* Enable Output Compare Match Interrupt */
+	TIMSK1 |= (1 << OCIE1A);
+#endif
 #else
 #error Unsupported AVR device
 #endif
@@ -381,10 +393,10 @@ void init_uart(void)
 {
 #define BAUD_RATE 9600
 
-#if defined(__AVR_ATmega16__)
+#if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
 	uint16_t ubrr = F_CPU / 16 / BAUD_RATE - 1;
-
 	/* Disable uart rx/tx first */
+#if defined(__AVR_ATmega16__)
 	UCSRB = 0;
 
 	/* Set baud rate */
@@ -394,6 +406,19 @@ void init_uart(void)
 	UCSRC = (1<<URSEL)|(3<<UCSZ0);
 	/* Enable receiver, transmitter and RX interrupt */
 	UCSRB = (1<<RXEN)|(1<<TXEN)|(1<<RXCIE);
+#endif
+#if defined(__AVR_ATmega32U4__)
+	UCSR1B = 0;
+
+	/* Set baud rate */
+	UBRR1H = (unsigned char)(ubrr>>8);
+	UBRR1L = (unsigned char)ubrr;
+	/* Set frame format: 8data, 1stop bit */
+        UCSR1C = _BV(UCSZ11) | _BV(UCSZ10);   // no parity, 8 data bits, 1 stop bit
+	/* Enable receiver, transmitter and RX interrupt */
+	UCSR1B = (1<<RXEN1)|(1<<TXEN1)|(1<<RXCIE1);
+        USBCON = 0;
+#endif
 #else
 #error Unsupported AVR device
 #endif
@@ -444,6 +469,7 @@ out:
 	asm volatile ("reti \n\t");
 }
 
+#if defined(__AVR_ATmega16__)
 ISR(USART_RXC_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
@@ -457,6 +483,23 @@ ISR(USART_RXC_vect, ISR_NAKED)
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("reti \n\t");
 }
+#endif
+
+#if defined(__AVR_ATmega32U4__)
+ISR(USART1_RX_vect, ISR_NAKED)
+{
+	GDB_SAVE_CONTEXT();
+	gdb_ctx->regs->pc_h &= RET_ADDR_MASK;
+	/* Advance to application stack on 32 registers, SREG and 16-bit PC.
+	   TODO: 24-bit PC unsupported */
+	gdb_ctx->sp = (uintptr_t)gdb_ctx->regs + 35;
+	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
+				  (gdb_ctx->regs->pc_l);
+	gdb_trap();
+	GDB_RESTORE_CONTEXT();
+	asm volatile ("reti \n\t");
+}
+#endif
 
 /******************************************************************************/
 
@@ -492,11 +535,19 @@ void gdb_init(struct gdb_context *ctx)
 
 static void gdb_send_byte(uint8_t b)
 {
-#if defined (__AVR_ATmega16__)
+#if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
+#if defined(__AVR_ATmega16__)
 	/* Wait for empty transmit buffer */
 	while (!(UCSRA & (1<<UDRE)))
 		;
 	UDR = b;
+#endif
+#if defined(__AVR_ATmega32U4__)
+	/* Wait for empty transmit buffer */
+	while (!(UCSR1A & (1<<UDRE1)))
+		;
+	UDR1 = b;
+#endif
 #else
 #error Unsupported AVR device
 #endif
@@ -504,12 +555,21 @@ static void gdb_send_byte(uint8_t b)
 
 static uint8_t gdb_read_byte(void)
 {
-#if defined (__AVR_ATmega16__)
+#if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
+#if defined(__AVR_ATmega16__)
 	/* Wait for data to be received */
 	while (!(UCSRA & (1<<RXC)))
 		/* TODO: watchdog reset */
 		;
 	return UDR;
+#endif
+#if defined(__AVR_ATmega32U4__)
+	/* Wait for data to be received */
+	while (!(UCSR1A & (1<<RXC1)))
+		/* TODO: watchdog reset */
+		;
+	return UDR1;
+#endif
 #else
 #error Unsupported AVR device
 #endif
