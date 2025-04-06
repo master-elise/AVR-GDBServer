@@ -38,7 +38,7 @@
 #define FLASH_OFFSET   0x00000000
 #define SRAM_OFFSET    0x00800000
 
-/* AVR puts garbage in hight bits on return address on stack.
+/* AVR puts garbage in high bits on return address on stack.
    Mask them out */
 #if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
 #define RET_ADDR_MASK  0x1f
@@ -364,7 +364,6 @@ void init_timer1(void)
 #define TIMER1_RATE 1000
 
 #if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
-#if defined(__AVR_ATmega16__)
 	/* Set CTC mode */
 	TCCR1B |= (1 << WGM12);
 	/* No prescaler */
@@ -372,16 +371,10 @@ void init_timer1(void)
 	/* Set the compare register */
 	OCR1A = F_CPU / TIMER1_RATE - 1;
 	/* Enable Output Compare Match Interrupt */
+#if defined(__AVR_ATmega16__)
 	TIMSK |= (1 << OCIE1A);
 #endif
 #if defined(__AVR_ATmega32U4__)
-	/* Set CTC mode */
-	TCCR1B |= (1 << WGM12);
-	/* No prescaler */
-	TCCR1B |= (1 << CS10);
-	/* Set the compare register */
-	OCR1A = F_CPU / TIMER1_RATE - 1;
-	/* Enable Output Compare Match Interrupt */
 	TIMSK1 |= (1 << OCIE1A);
 #endif
 #else
@@ -469,24 +462,13 @@ out:
 	asm volatile ("reti \n\t");
 }
 
+#if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
 #if defined(__AVR_ATmega16__)
 ISR(USART_RXC_vect, ISR_NAKED)
-{
-	GDB_SAVE_CONTEXT();
-	gdb_ctx->regs->pc_h &= RET_ADDR_MASK;
-	/* Advance to application stack on 32 registers, SREG and 16-bit PC.
-	   TODO: 24-bit PC unsupported */
-	gdb_ctx->sp = (uintptr_t)gdb_ctx->regs + 35;
-	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
-				  (gdb_ctx->regs->pc_l);
-	gdb_trap();
-	GDB_RESTORE_CONTEXT();
-	asm volatile ("reti \n\t");
-}
 #endif
-
 #if defined(__AVR_ATmega32U4__)
 ISR(USART1_RX_vect, ISR_NAKED)
+#endif
 {
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->regs->pc_h &= RET_ADDR_MASK;
@@ -499,6 +481,8 @@ ISR(USART1_RX_vect, ISR_NAKED)
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("reti \n\t");
 }
+#else
+#error Unsupported AVR device
 #endif
 
 /******************************************************************************/
